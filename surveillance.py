@@ -6,7 +6,6 @@ import time
 import random
 import struct
 import numpy as np
-import cv
 import cv2
 
 from subprocess import call
@@ -82,7 +81,7 @@ def receiveControlPacket(output):
 	
 def dumpDebugImage(path, name, image, extension):
 	params = list()
-	params.append(cv.CV_IMWRITE_JPEG_QUALITY)
+	params.append(cv2.IMWRITE_JPEG_QUALITY)
 	params.append(50)
 	image = cv2.flip(image, -1) # Flip image around both axis
 	# putText args : image, text, origin, font, font scale, color, thickness, line type
@@ -114,6 +113,9 @@ MESSAGE_34 = bytearray([0x00,0x00,0x20,0x02,0x12,0x00,0x00,0x1e,0x00,0x01,0x00,0
 
 MESSAGE_119 = bytearray([0x02,0x00,0x70,0x07,0x32,0x00,0x00,0x73,0x00,0x64,0x00,0x00,0x00,0x4d,0x61,0x80,0x87,0xaa,0x84,0x8d,0xd4,0xba,0x8c,0x9a,0x9a,0x80,0x86,0x87,0xba,0x9d,0x88,0x9b,0x9d,0xd2,0x9a,0x80,0x8d,0xa7,0xd4,0xdc,0x98,0x8d,0xdf,0xa6,0xa3,0xdf,0xda,0xda,0xdf,0xde,0x8f,0x8f,0x8f,0xd2,0x8f,0x9d,0xa7,0xd9,0xd4,0xa1,0xa2,0xb9,0xaa,0xb9,0x9b,0x8c,0x9a,0x8c,0x87,0x9d,0xc7,0xa1,0xa2,0xb9,0xaa,0xb9,0x9b,0x8c,0x9a,0x8c,0x87,0x9d,0xd2,0xaf,0xad,0xd9,0xd4,0xdb,0xdc,0xd8,0xdd,0xd0,0xdb,0xd1,0xd1,0xd2,0x8f,0x9d,0xa7,0xd8,0xd4,0x87,0x8c,0x9d,0xc7,0xd8,0xd9,0xdb,0xdc,0xd2,0xaf,0xad,0xd8,0xd4,0xd8,0xd9,0xdb,0xdc,0xd2])
 
+# Allowed byte length received after MESSAGE_119, since not all cameras send the same byte length in return.
+allowedPacketLengths = [368, 334]
+
 # The continue packet is composed of a first part where the 0xff below get dynamically replaced by the appropriate value at runtime, and a second part that is invariable
 MESSAGE_CONTINUE_BEGIN = bytearray([0x00,0x00,0xff,0x02,0x12,0x00,0x00,0xff,0x00,0x01,0x00,0x00,0x00,0xa0,0xaa,0xa4,0xad,0xd4,0xd8,0xd2,0xba,0xac,0xb8,0xd4])
 MESSAGE_CONTINUE_END = bytearray([0xd2,0xbd,0xa0,0xa4,0xac,0xd4,0xd9,0xd2,0xe9])
@@ -142,7 +144,7 @@ msg = bytearray()
 capturePath = SAVE_DIR + time.strftime(CAPTURE_NAME)
 if not os.path.exists(capturePath): 
 	os.makedirs(capturePath)
-video_out = cv2.VideoWriter(capturePath+"/"+'capture.avi',cv.CV_FOURCC('X','V','I','D'), 4.0, (640,480))
+video_out = cv2.VideoWriter(capturePath+"/"+'capture.avi',cv2.VideoWriter_fourcc('X','V','I','D'), 4.0, (640,480))
 if not video_out.isOpened():
 	print("[ERROR] unable to open video file in %s" % capturePath)
 	
@@ -278,8 +280,8 @@ try:
 				if(nbReceived == 42):
 					print("[CONTROL] received 42 late, re-reading")
 					nbReceived = receiveControlPacket(buffer)
-				if (nbReceived != 368):
-					raise RestartException("Expected 368 bytes, received %d" % nbReceived,15)
+				if (nbReceived not in allowedPacketLengths):
+					raise RestartException("Expected one of %(allowedPacketLengths)s bytes, received %(receivedBytes)d" % {"allowedPacketLengths":allowedPacketLengths, "receivedBytes":nbReceived},15)
 			except socket.timeout:
 				raise RestartException("Socket timeout 4",15)
 			except KeyboardInterrupt:
@@ -358,8 +360,8 @@ try:
 							now = time.time()
 							
 							# Convert raw data buffer to OpenCV image format
-							RGBImageNext = cv2.imdecode(np.fromstring(jpeg, dtype=np.uint8),cv2.CV_LOAD_IMAGE_COLOR)
-							
+							RGBImageNext = cv2.imdecode(np.fromstring(jpeg, dtype=np.uint8),cv2.IMREAD_COLOR)
+
 							# Create a grayscale version of the image for analysis
 							GRAYImageNext = cv2.cvtColor(RGBImageNext,cv2.COLOR_BGR2GRAY)
 							
@@ -414,7 +416,7 @@ try:
 									
 										# reinitialize daily video file (note : will overwrite exiting one from the same day if it already exists, because
 										# there is no way to reopen an existing file with VideoWriter)
-										video_out = cv2.VideoWriter(capturePath+"/"+'capture.avi',cv.CV_FOURCC('X','V','I','D'), 30.0, (640,480))
+										video_out = cv2.VideoWriter(capturePath+"/"+'capture.avi',cv2.VideoWriter_fourcc('X','V','I','D'), 30.0, (640,480))
 										if not video_out.isOpened():
 											print("[ERROR] unable to open video file %s" % capturePath+"/"+'capture.avi')
 										else:
@@ -437,7 +439,7 @@ try:
 										
 								# In any case, start (or re-start) the recording of N consecutive images
 								imagesToCapture = NB_IMAGES_CAPTURED_UPON_DETECTION
-							
+
 							if (motion_detected or imagesToCapture > 0):							
 								# DEBUG
 								# dumpDebugImage(capturePath, "capture"+str(capturedImageIndex), RGBImageNext, ".jpg")
