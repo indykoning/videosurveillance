@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-import os
 import sys, traceback
 import socket
 import time
@@ -8,99 +7,53 @@ import struct
 import numpy as np
 import cv2
 
-from subprocess import call
-
 # Our IP address
-UDP_IP_HOST = "192.168.1.1"
+UDP_IP_HOST = "192.168.178.24"
 UDP_PORT_HOST = 5123 # arbitrary
 
 # Camera IP address and UDP port
-UDP_IP_TARGET = "192.168.1.2"
+UDP_IP_TARGET = "192.168.178.157"
 UDP_PORT_TARGET = 5000
 
 # network socket timeout in seconds
 SOCKET_TIMEOUT = 2
 
 # Location of image recordings
-SAVE_DIR = "/mnt/imagestore/"
+SAVE_DIR = "/home/indykoning/Downloads/videosurveillance-master/output/"
 
 # Nb of UDP packets to receive to get one full image.
 # Packets are typically 904 bytes, 80 packets is about 70kB, which is enough
 # for the camera setup I used (640x480 medium quality jpeg)
 NB_FRAGMENTS_TO_ACCUMULATE = 80
 
-# filtering threshold for the construction of the delta image
-ABSDIFF_THRESHOLD_LEVEL = 50
-
-# Above this min number of pixels in the delta image, a detection is notified.
-NB_DIFFERENCES_THRESHOLD_MIN = 250
-# Above this max number of pixels in the delta image, this is likely a false positive,
-# too much has changed (e.g. happens during the IR to normal light transition frames)
-NB_DIFFERENCES_THRESHOLD_MAX = 50000
-
-# Nb of consecutive images that will be systematically recorded once a motion detection is triggered
-NB_IMAGES_CAPTURED_UPON_DETECTION = 10
-
-# Do not beep due to motion detection more than once every X seconds
-BEEP_COOLDOWN_TIME = 60.0
-
-# Period (in seconds) used for saving a frame unconditionally for monitoring/debug purpose
-MONITORING_PERIOD = 900
-
-# Name of the directory to save image to : also impact how often a new directory is created.
-CAPTURE_NAME = "%Y-%m-%d"
-#CAPTURE_NAME = "%Y-%m-%d_%Hh"
-
 def byteToInt(byteVal):
 	return struct.unpack('B', byteVal[0])[0]
 
 def sendControlPacket(packet):
 	print("[CONTROL] sending %d bytes " % len(packet))
-	#print("[%s] sending UDP data (%d bytes)" % (time.time(),len(packet)))
-	#hex_string = "".join("Sending: ").join(" %02x" % packet[b] for b in range(0, 13))
-	#print(hex_string)
-	sock.sendto(packet, (UDP_IP_TARGET, UDP_PORT_TARGET))	
+	sock.sendto(packet, (UDP_IP_TARGET, UDP_PORT_TARGET))
 
 def sendContinuePacket(packet):
 	sock.sendto(packet, (UDP_IP_TARGET, UDP_PORT_TARGET))
-	
+
 def receiveControlPacket(output):
 	sock.settimeout(SOCKET_TIMEOUT)
 	try:
 		nbbytes, addr = sock.recvfrom_into(output, 1024)
 		print("[CONTROL] received %d bytes " % nbbytes)
-		#print("[%s] received UDP data (from %s)  => %d bytes " % (time.time(), addr, nbbytes))
-		# if (nbbytes < 64):
-			# hex_string = "".join(" %02x" % buffer[b] for b in range(0, nbbytes))
-			# print(hex_string)
 		return nbbytes
 	except socket.timeout:
 		raise socket.timeout
 	except KeyboardInterrupt:
 		raise
-	
-def dumpDebugImage(path, name, image, extension):
-	params = list()
-	params.append(cv2.IMWRITE_JPEG_QUALITY)
-	params.append(50)
-	image = cv2.flip(image, -1) # Flip image around both axis
-	# putText args : image, text, origin, font, font scale, color, thickness, line type
-	cv2.putText(image,time.strftime("%Y-%m-%d  %H:%M:%S"),(10,460), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0,0,255), 2, 8)
-	cv2.imwrite(path+"/"+ time.strftime("%Hh%Mm%Ss_")+ name + extension,image, params)
 
-def recordImage(video_file, image):
-	image = cv2.flip(image, -1) # Flip image around both axis
-	# putText args : image, text, origin, font, font scale, color, thickness, line type
-	cv2.putText(image,time.strftime("%Y-%m-%d  %H:%M:%S"),(10,460), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0,0,255), 2, 8)
-	video_file.write(image)
-	
 class RestartException(Exception):
 	def __init__(self, msg, delay=1):
 		self.msg = msg
 		self.delay = delay
 	def __str__(self):
 		return repr(self.msg)
-	
+
 MESSAGE_43 = bytearray([0x00,0x00,0xb0,0x02,0x82,0x00,0x00,0x27,0x00,0x01,0x00,0x00,0x00,0x4d,0x61,0x63,0x49,0x50,0x3d,0x42,0x43,0x2d,0x41,0x45,0x2d,0x43,0x35,0x2d,0x37,0x43,0x2d,0x37,0x37,0x2d,0x37,0x42,0x2b,0x31,0x36,0x34,0x36,0x37,0x3b])
 
 MESSAGE_13_1 = bytearray([0x00,0x00,0xd0,0x00,0x82,0x00,0x06,0x09,0x00,0x01,0x00,0x00,0x00])
@@ -132,43 +85,30 @@ buffer = bytearray(1024)
 
 global_loop_iteration = 0
 
-capturedImageIndex = 0
-# capturePath = SAVE_DIR
-
 sock = None
-# video_out = None
-captureInProgress = False
 
 msg = bytearray()
 
-capturePath = SAVE_DIR + time.strftime(CAPTURE_NAME)
-if not os.path.exists(capturePath): 
-	os.makedirs(capturePath)
-video_out = cv2.VideoWriter(capturePath+"/"+'capture.avi',cv2.VideoWriter_fourcc('X','V','I','D'), 4.0, (640,480))
-if not video_out.isOpened():
-	print("[ERROR] unable to open video file in %s" % capturePath)
-	
 try:
 	while True:
 		try:
 			global_loop_iteration +=1
-			
+
 			print("*****************************************************************")
 			print("Global loop iteration #%d started on %s" % (global_loop_iteration, time.strftime("%Y-%m-%d @ %H:%M:%S")))
 			print("*****************************************************************")
-			
+
 			#########################
 			# VARIOUS INITIALIZATIONS
 			#########################
-			
+
 			# the 7th byte in the 13 byte msg seems to be arbitrary: pick any random value for which bit 4 is not already set
 			val = random.randint(0,16)
 			MESSAGE_13_1[6] = val
 			MESSAGE_13_2[6] = val
 			MESSAGE_13_3[6] = val
-			
+
 			msg = b''
-			inImage = False
 			imageIndex = 0
 			lastFragmentId = 0
 			fragmentIndex = 0
@@ -179,57 +119,33 @@ try:
 			fragments_received = 0
 
 			bytes=''
-			latestBeepTime = 0 # To ensure that the first detection will beep
-			#latestImageMonitoringTime = time.time()
 			socket_error = False
-			nbDifferences = 0
-			imagesToCapture = 0
 
-			RGBImageCurrent = None
-			RGBImagePrev = None
-
-			GRAYImageCurrent = None
-			GRAYImagePrev = None
-			
-			#RunningAverageImage = None
-			if os.path.exists("detectionmask.png"): 
-				DetectionMask = cv2.imread("detectionmask.png", cv2.CV_LOAD_IMAGE_GRAYSCALE)
-			else:
-				DetectionMask = np.zeros((480,640), np.uint8)
-				DetectionMask[:] = 255
-				#dumpDebugImage(capturePath, "generated_mask", DetectionMask, ".png")
-			
-			# Initialize video file output
-			# capturePath = SAVE_DIR + time.strftime("%Y-%m-%d_%H")
-			# if not os.path.exists(capturePath): 
-				# os.makedirs(capturePath)
-			# video_out = cv2.VideoWriter(capturePath+"/"+'capture.avi',cv.CV_FOURCC('X','V','I','D'), 4.0, (640,480))
-			
 			#######################
 			# NETWORK RELATED SETUP
 			#######################
 			# In case this is not the first run
-			if sock: 
+			if sock:
 					sock.close()
-					
-			# Open UDP socket to talk to camera 
+
+			# Open UDP socket to talk to camera
 			try:
 				sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 				sock.bind((UDP_IP_HOST, UDP_PORT_HOST))
-			except socket.error, (value,message): 
-				if sock: 
-					sock.close() 
+			except socket.error, (value,message):
+				if sock:
+					sock.close()
 				raise RestartException("Could not open socket: " + message, 15)
 			except KeyboardInterrupt:
 				raise
-				
+
 		    ################################
 			# CAMERA INITIALIZATION SEQUENCE
 			################################
 			sendControlPacket(MESSAGE_43)
 
 			sendControlPacket(MESSAGE_13_1)
-				
+
 			for i in range(5):
 				try:
 					nbReceived = receiveControlPacket(buffer)
@@ -270,7 +186,7 @@ try:
 				raise RestartException("Socket timeout 3",15)
 			except KeyboardInterrupt:
 				raise
-				
+
 			sendControlPacket(MESSAGE_34)
 
 			sendControlPacket(MESSAGE_119)
@@ -286,7 +202,7 @@ try:
 				raise RestartException("Socket timeout 4",15)
 			except KeyboardInterrupt:
 				raise
-				
+
 			# reception packet TAPA 410 & paquet 42 bytes
 			#receiveControlPacket(buffer)
 
@@ -298,15 +214,15 @@ try:
 				sock.settimeout(SOCKET_TIMEOUT)
 
 				# Receive UDP fragment
-				try:	
+				try:
 					chunk = sock.recv(1024)
 				except KeyboardInterrupt:
 					raise
-				except: 
+				except:
 					socket_error = True
 					print("[DATA] Sock.recv error")
 					continue
-					
+
 				nbbytes = len(chunk)
 				fragments_received += 1
 				fragmentIndex += 1
@@ -326,15 +242,15 @@ try:
 							# If we lost a fragment, no point in continuing accumulating data for this frame so restart another data grab
 							else:
 								msg = b''
-								fragments_received = 0	
+								fragments_received = 0
 							# Keep track of sequence number
 							lastFragmentId = byteToInt(chunk[0])
 					# If we received an unexpected packet in the middle of the image data, something is wrong : just drop the ongoing image capture & restart
 					else:
 						msg = b''
-						fragments_received = 0	
+						fragments_received = 0
 				else:
-					# We now normally have enough data so that a full image is present in the buffer: search for SOI and EOI markers 
+					# We now normally have enough data so that a full image is present in the buffer: search for SOI and EOI markers
 					# SOI = 0xffd8
 					# EOI = 0xffd9
 					SOI_index = -1
@@ -358,117 +274,12 @@ try:
 
 						try:
 							now = time.time()
-							
+
 							# Convert raw data buffer to OpenCV image format
 							RGBImageNext = cv2.imdecode(np.fromstring(jpeg, dtype=np.uint8),cv2.IMREAD_COLOR)
 
-							# Create a grayscale version of the image for analysis
-							GRAYImageNext = cv2.cvtColor(RGBImageNext,cv2.COLOR_BGR2GRAY)
-							
-							# Launch motion detection 
-							if (imageIndex > 2):
-								d1 = cv2.absdiff(GRAYImagePrev, GRAYImageNext)
-								d2 = cv2.absdiff(GRAYImageCurrent, GRAYImageNext)
-								#result = np.zeros(d1.shape)
-								result = cv2.bitwise_and(d1, d2)
-								#masked_result = np.zeros(result.shape)
-								masked_result = cv2.bitwise_and(result, DetectionMask)
-								thresholded = cv2.threshold(masked_result, ABSDIFF_THRESHOLD_LEVEL, 255, cv2.THRESH_BINARY)
-								nbDifferences = cv2.countNonZero(thresholded[1])
-								
-								# DEBUG / Experimental
-								#cv2.accumulateWeighted(GRAYImageNext,RunningAverageImage,0.5)
-								#avg_image = cv2.convertScaleAbs(RunningAverageImage)
-							
-							# Skip detection for the first two frames
-							else:
-								#RunningAverageImage = np.float32(GRAYImageNext)
-								nbDifferences = 0
+							cv2.imwrite(SAVE_DIR+'stream.jpg', RGBImageNext)
 
-							motion_detected = False
-							
-							if ( (nbDifferences > NB_DIFFERENCES_THRESHOLD_MIN) and (nbDifferences < NB_DIFFERENCES_THRESHOLD_MAX) and (imageIndex != 0)):
-								
-								# Play a sound to signal the detection, but not too often.
-								if (now - latestBeepTime) > BEEP_COOLDOWN_TIME:
-									call(["aplay", "-q", "beepbeep.wav"])
-									print("[CONTROL] Playing detection sound on %s" % time.strftime("%Y-%m-%d @ %H:%M:%S"))
-									latestBeepTime = now
-									
-								motion_detected = True
-								
-								# Handle the case of a new/fresh detection
-								if captureInProgress == False:
-									
-									captureInProgress = True
-									print("[DATA] image %d on %s: MOTION DETECTED" % (imageIndex, time.strftime("%Y-%m-%d @ %H:%M:%S")))
-									
-									# Reset sequence-internal image index
-									capturedImageIndex = 0
-														
-									# Create new dir for storing this sequence
-									capturePath = SAVE_DIR + time.strftime(CAPTURE_NAME)
-									# This is a new day : open new video file (create directory if required)
-									if not os.path.isfile(capturePath+"/"+'capture.avi'): 
-										if not os.path.exists(capturePath):
-											print("[CONTROL] Creating directory %s" % capturePath)
-											os.makedirs(capturePath)
-									
-										# reinitialize daily video file (note : will overwrite exiting one from the same day if it already exists, because
-										# there is no way to reopen an existing file with VideoWriter)
-										video_out = cv2.VideoWriter(capturePath+"/"+'capture.avi',cv2.VideoWriter_fourcc('X','V','I','D'), 30.0, (640,480))
-										if not video_out.isOpened():
-											print("[ERROR] unable to open video file %s" % capturePath+"/"+'capture.avi')
-										else:
-											print("[CONTROL] opened new video capture file %s" % capturePath+"/"+'capture.avi')
-									else:
-										print("[CONTROL] Reusing existing video file %s" % capturePath+"/"+'capture.avi')
-									
-									# DEBUG
-									#dumpDebugImage(capturePath, "absdif_thresholded", thresholded[1], ".png")
-									#dumpDebugImage(capturePath, "masked_result", masked_result, ".png")
-									#dumpDebugImage(capturePath, "averageimg", avg_image, ".png")									
-									#dumpDebugImage(capturePath, "capture"+str(capturedImageIndex), RGBImagePrev, ".jpg")
-									#capturedImageIndex +=1
-									#dumpDebugImage(capturePath, "capture"+str(capturedImageIndex), RGBImageCurrent, ".jpg")
-									#capturedImageIndex +=1
-										
-									# Record the last 2 images (N-2 and N-1) and the difference image that triggered the detection
-									recordImage(video_out, RGBImagePrev)
-									recordImage(video_out, RGBImageCurrent)
-										
-								# In any case, start (or re-start) the recording of N consecutive images
-								imagesToCapture = NB_IMAGES_CAPTURED_UPON_DETECTION
-
-							if (motion_detected or imagesToCapture > 0):							
-								# DEBUG
-								# dumpDebugImage(capturePath, "capture"+str(capturedImageIndex), RGBImageNext, ".jpg")
-								
-								recordImage(video_out, RGBImageNext)
-								imagesToCapture -=1
-								
-								if imagesToCapture == 0:
-									captureInProgress = False
-										
-								capturedImageIndex +=1
-							
-							# Unconditionally save a frame periodically
-							#if (now - latestImageMonitoringTime) > MONITORING_PERIOD:
-							#	path = SAVE_DIR +time.strftime("%Y-%m-%d")+ "/daily_monitoring"
-							#	if not os.path.exists(path): 
-							#		print("[CONTROL] daily monitoring: creating folder %s" % path)
-							#		os.makedirs(path)
-							#	dumpDebugImage(path, "monitoring", RGBImageNext, ".jpg")
-							#	# Update monitoring capture time
-							#	latestImageMonitoringTime = now
-							
-							# Update images for next analysis iteration
-							RGBImagePrev = RGBImageCurrent
-							RGBImageCurrent = RGBImageNext
-											
-							GRAYImagePrev = GRAYImageCurrent
-							GRAYImageCurrent = GRAYImageNext
-						
 						except KeyboardInterrupt:
 							raise
 						except:
@@ -476,15 +287,15 @@ try:
 							traceback.print_exception(exc_type, exc_value, exc_traceback,limit=2, file=sys.stdout)
 							del exc_traceback
 							pass
-						
+
 						# Log a trace every 5 min or so (5*60s*3img/sec)
 						if (imageIndex % 900 == 0):
 							 print("[DATA] Still alive %s, image index %d" % (time.strftime("%Y-%m-%d @ %H:%M:%S"), imageIndex))
 
-						imageIndex += 1	
+						imageIndex += 1
 			#		else:
 			#			print("no image found in stream among %d bytes"% len(msg))
-					
+
 					# Restart another data grab
 					msg = b''
 					fragments_received = 0
@@ -492,50 +303,50 @@ try:
 				####################################
 				# MANAGE "CONTINUE" PACKETS SEQUENCE
 				####################################
-				
+
 				# Send out a feedback message every 5 fragments received, to tell the camera to keep sending frames.
 				if (fragmentIndex%5) == 0:
 					tmp = bytearray()
-						
+
 					if (nbDigits == 1):
 						MESSAGE_CONTINUE_BEGIN[2] = 0x20
 						MESSAGE_CONTINUE_BEGIN[7] = 0x1e
 						tmp.append(CONTINUE_LIST_1[base_index+continue_index[0]])
 						continue_index[0] += 1
-				
+
 						if continue_index[0] == 2:
 							nbDigits += 1
 							continue_index[1] = 1 # start at d8
 							continue_index[0] = 0
-							
+
 					elif (nbDigits == 2):
 						MESSAGE_CONTINUE_BEGIN[2] = 0x30
 						MESSAGE_CONTINUE_BEGIN[7] = 0x1f
 						tmp.append(CONTINUE_LIST_2[continue_index[1]])
 						tmp.append(CONTINUE_LIST_1[base_index+continue_index[0]])
-						
+
 						continue_index[0] += 1
-									
+
 						if continue_index[0] == 2:
 							continue_index[1] += 1
 							continue_index[0] = 0
-						
+
 						if continue_index[1] == len(CONTINUE_LIST_2):
 							nbDigits += 1
 							continue_index[2] = 1 # start at d8
 							continue_index[1] = 0 # start at d9
 							continue_index[0] = 0
-							
+
 					elif (nbDigits == 3):
 						MESSAGE_CONTINUE_BEGIN[2] = 0x40
 						MESSAGE_CONTINUE_BEGIN[7] = 0x20
 						tmp.append(CONTINUE_LIST_2[continue_index[2]])
 						tmp.append(CONTINUE_LIST_2[continue_index[1]])
 						tmp.append(CONTINUE_LIST_1[base_index+continue_index[0]])
-						
+
 						# update digit 0
 						continue_index[0] += 1
-						
+
 						# update digit 1
 						if continue_index[0] == 2:
 							continue_index[1] += 1
@@ -544,7 +355,7 @@ try:
 						if continue_index[1] == len(CONTINUE_LIST_2):
 							continue_index[2] += 1
 							continue_index[1] = 0 # start at d9
-							continue_index[0] = 0			
+							continue_index[0] = 0
 						# check for adding one more digit
 						if continue_index[2] == len(CONTINUE_LIST_2):
 							nbDigits += 1
@@ -552,7 +363,7 @@ try:
 							continue_index[2] = 0 # start at d9
 							continue_index[1] = 0 # start at d9
 							continue_index[0] = 0 # start at d9
-							
+
 					elif (nbDigits == 4):
 						MESSAGE_CONTINUE_BEGIN[2] = 0x50
 						MESSAGE_CONTINUE_BEGIN[7] = 0x21
@@ -560,36 +371,36 @@ try:
 						tmp.append(CONTINUE_LIST_2[continue_index[2]])
 						tmp.append(CONTINUE_LIST_2[continue_index[1]])
 						tmp.append(CONTINUE_LIST_1[base_index+continue_index[0]])
-						
+
 						# update digit 0
 						continue_index[0] += 1
-						
+
 						# update digit 1
 						if continue_index[0] == 2:
 							continue_index[1] += 1
 							continue_index[0] = 0
-							
+
 						# update digit 2
 						if continue_index[1] == len(CONTINUE_LIST_2):
 							continue_index[2] += 1
 							continue_index[1] = 0 # start at d9
-							continue_index[0] = 0	
-							
+							continue_index[0] = 0
+
 						# update digit 3
 						if continue_index[2] == len(CONTINUE_LIST_2):
 							continue_index[3] += 1 # start at d8
 							continue_index[2] = 0 # start at d9
 							continue_index[1] = 0 # start at d9
 							continue_index[0] = 0 # start at d9
-							
+
 						# check for adding one more digit
 						if continue_index[3] == len(CONTINUE_LIST_2):
 							nbDigits += 1
 							continue_index[4] = 1 # start at d8
 							continue_index[3] = 0 # start at d9
 							continue_index[2] = 0 # start at d9
-							continue_index[1] = 0 # start at d9	
-							
+							continue_index[1] = 0 # start at d9
+
 					elif (nbDigits == 5):
 						MESSAGE_CONTINUE_BEGIN[2] = 0x60
 						MESSAGE_CONTINUE_BEGIN[7] = 0x22
@@ -598,50 +409,50 @@ try:
 						tmp.append(CONTINUE_LIST_2[continue_index[2]])
 						tmp.append(CONTINUE_LIST_2[continue_index[1]])
 						tmp.append(CONTINUE_LIST_1[base_index+continue_index[0]])
-						
+
 						# update digit 0
 						continue_index[0] += 1
-						
+
 						# update digit 1
 						if continue_index[0] == 2:
 							continue_index[1] += 1
 							continue_index[0] = 0
-							
+
 						# update digit 2
 						if continue_index[1] == len(CONTINUE_LIST_2):
 							continue_index[2] += 1
 							continue_index[1] = 0 # start at d9
-							continue_index[0] = 0	
-							
+							continue_index[0] = 0
+
 						# update digit 3
 						if continue_index[2] == len(CONTINUE_LIST_2):
 							continue_index[3] += 1 # start at d8
 							continue_index[2] = 0 # start at d9
 							continue_index[1] = 0 # start at d9
-							continue_index[0] = 0 # start at d9			
-						
+							continue_index[0] = 0 # start at d9
+
 						# update digit 4
 						if continue_index[3] == len(CONTINUE_LIST_2):
 							continue_index[4] += 1 # start at d8
 							continue_index[3] = 0 # start at d9
 							continue_index[2] = 0 # start at d9
 							continue_index[1] = 0 # start at d9
-							continue_index[0] = 0 # start at d9	
-						
+							continue_index[0] = 0 # start at d9
+
 						if continue_index[4] == len(CONTINUE_LIST_2):
 							# restart sequence
 							#print("RESTARTING SEQUENCE")
-							nbDigits = 1	
+							nbDigits = 1
 					# horrible reverse-engineered condition to restart sequence at 1 digit
 					if len(tmp) == 5 and tmp.startswith(b'\xdf\xdc\xdd\xd0'):
 						nbDigits = 1
-					# horrible experimentally-determined condition to change the toggle data set for the last byte	
+					# horrible experimentally-determined condition to change the toggle data set for the last byte
 					if (fragmentIndex % 100 == 0):
-						base_index = (base_index + 2) % 20  
-						
+						base_index = (base_index + 2) % 20
+
 					packet = MESSAGE_CONTINUE_BEGIN + tmp + MESSAGE_CONTINUE_END
 					sendContinuePacket(packet)
-					
+
 		except RestartException as resExc:
 			print("[ERROR] restarting global loop in %d seconds due to exception: %s" % (resExc.delay,resExc.msg))
 			# Let the camera breathe a bit before trying again
@@ -650,16 +461,16 @@ try:
 		except KeyboardInterrupt:
 			raise
 		#end of global loop
-	# end of global try	
+	# end of global try
 
-	
+
 except KeyboardInterrupt:
-	print("[CONTROL] manually interrupted, %s" % time.strftime("%Y-%m-%d @ %H:%M:%S")) 
+	print("[CONTROL] manually interrupted, %s" % time.strftime("%Y-%m-%d @ %H:%M:%S"))
 except NameError as n:
 	print("[ERROR] NameError %s" % n)
 except:
 	exc_type, exc_value, exc_traceback = sys.exc_info()
-	traceback.print_exception(exc_type, exc_value, exc_traceback,limit=2, file=sys.stdout)	
+	traceback.print_exception(exc_type, exc_value, exc_traceback,limit=2, file=sys.stdout)
 	del exc_traceback
-	
+
 print("[CONTROL] exiting surveillance")
