@@ -8,7 +8,8 @@ def saveFile(cam, jpeg):
     cv2.imwrite('stream.jpg', RGBImageNext)
 
 
-camera = Camera.P2PCam("192.168.178.24", "192.168.178.157")
+# camera = Camera.P2PCam("192.168.178.28", "192.168.178.9")
+camera = Camera.P2PCam("10.42.0.1", "10.42.0.134")
 camera.onJpegReceived = saveFile
 camera.NB_FRAGMENTS_TO_ACCUMULATE = 20
 camera.start()

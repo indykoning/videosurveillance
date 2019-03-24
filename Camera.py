@@ -56,10 +56,10 @@ class P2PCam():
         self.msg = bytearray()
 
     def byteToInt(self, byteVal):
-        return struct.unpack('B', byteVal[0])[0]
+        return byteVal
 
     def sendControlPacket(self, packet):
-        print("[CONTROL] sending %d bytes " % len(packet))
+        print(("[CONTROL] sending %d bytes " % len(packet)))
         self.sock.sendto(packet, (self.UDP_IP_TARGET, self.UDP_PORT_TARGET))
 
     def sendContinuePacket(self, packet):
@@ -69,7 +69,7 @@ class P2PCam():
         self.sock.settimeout(self.SOCKET_TIMEOUT)
         try:
             nbbytes, addr = self.sock.recvfrom_into(output, 1024)
-            print("[CONTROL] received %d bytes " % nbbytes)
+            print(("[CONTROL] received %d bytes " % nbbytes))
             return nbbytes
         except socket.timeout:
             raise socket.timeout
@@ -81,19 +81,20 @@ class P2PCam():
             while True:
                 self.loop()
         except KeyboardInterrupt:
-            print("[CONTROL] manually interrupted, %s" % time.strftime("%Y-%m-%d @ %H:%M:%S"))
+            print(("[CONTROL] manually interrupted, %s" % time.strftime("%Y-%m-%d @ %H:%M:%S")))
         except NameError as n:
-            print("[ERROR] NameError %s" % n)
+            print(("[ERROR] NameError %s" % n))
         except:
             exc_type, exc_value, exc_traceback = sys.exc_info()
             traceback.print_exception(exc_type, exc_value, exc_traceback,limit=2, file=sys.stdout)
             del exc_traceback
+        print("[CONTROL] exiting surveillance")
 
     def loop(self):
         try:
             self.global_loop_iteration +=1
             print("*****************************************************************")
-            print("Global loop iteration #%d started on %s" % (self.global_loop_iteration, time.strftime("%Y-%m-%d @ %H:%M:%S")))
+            print(("Global loop iteration #%d started on %s" % (self.global_loop_iteration, time.strftime("%Y-%m-%d @ %H:%M:%S"))))
             print("*****************************************************************")
             #########################
             # VARIOUS INITIALIZATIONS
@@ -133,12 +134,17 @@ class P2PCam():
             ################################
             # CAMERA INITIALIZATION SEQUENCE
             ################################
+            sendingVideo = False
             self.sendControlPacket(self.MESSAGE_43)
             self.sendControlPacket(self.MESSAGE_13_1)
             for i in range(5):
                 try:
                     nbReceived = self.receiveControlPacket(self.buffer)
-                    if ((nbReceived == 13) and (self.buffer[4] == (self.MESSAGE_13_1[4] | 0b00010000)) and (self.buffer[6] != (self.MESSAGE_13_1[6] | 0b01000000))):
+                    if (nbReceived == 904):
+                        print("[NOTICE] Already sending video")
+                        sendingVideo = True
+                        break
+                    elif ((nbReceived == 13) and (self.buffer[4] == (self.MESSAGE_13_1[4] | 0b00010000)) and (self.buffer[6] != (self.MESSAGE_13_1[6] | 0b01000000))):
                         print("[CONTROL] status ok")
                         break
                     else:
@@ -150,45 +156,46 @@ class P2PCam():
                     raise RestartException("Socket timeout 1", 15)
                 except KeyboardInterrupt:
                     raise
-            self.sendControlPacket(self.MESSAGE_13_2)
-            self.sendControlPacket(self.MESSAGE_13_3)
-            try:
-                nbReceived = self.receiveControlPacket(self.buffer)
-                if (nbReceived != 13):
-                    raise RestartException("Expected 13 bytes, received %d" % nbReceived, 15)
-            except socket.timeout:
-                raise RestartException("Socket timeout 2", 15)
-            except KeyboardInterrupt:
-                raise
-            self.sendControlPacket(self.MESSAGE_212)
-            try:
-                nbReceived = self.receiveControlPacket(self.buffer)
-                # Sometimes the 42 bytes packet comes before the 115: discard it and re-read
-                if(nbReceived == 42):
-                    print("[CONTROL] received 42 early, re-reading")
+            if not sendingVideo:
+                self.sendControlPacket(self.MESSAGE_13_2)
+                self.sendControlPacket(self.MESSAGE_13_3)
+                try:
                     nbReceived = self.receiveControlPacket(self.buffer)
-                if (nbReceived != 155 and nbReceived != 156):
-                    raise RestartException("Expected 155 bytes, received %d" % nbReceived, 15)
-            except socket.timeout:
-                raise RestartException("Socket timeout 3",15)
-            except KeyboardInterrupt:
-                raise
-            self.sendControlPacket(self.MESSAGE_34)
-            self.sendControlPacket(self.MESSAGE_119)
-            try:
-                nbReceived = self.receiveControlPacket(self.buffer)
-                # Sometimes the 42 bytes packet comes at this point: discard it and re-read
-                if(nbReceived == 42):
-                    print("[CONTROL] received 42 late, re-reading")
+                    if (nbReceived != 13):
+                        raise RestartException("Expected 13 bytes, received %d" % nbReceived, 15)
+                except socket.timeout:
+                    raise RestartException("Socket timeout 2", 15)
+                except KeyboardInterrupt:
+                    raise
+                self.sendControlPacket(self.MESSAGE_212)
+                try:
                     nbReceived = self.receiveControlPacket(self.buffer)
-                if (nbReceived not in self.allowedPacketLengths):
-                    raise RestartException("Expected one of %(allowedPacketLengths)s bytes, received %(receivedBytes)d" % {"allowedPacketLengths":self.allowedPacketLengths, "receivedBytes":nbReceived},15)
-            except socket.timeout:
-                raise RestartException("Socket timeout 4",15)
-            except KeyboardInterrupt:
-                raise
-            # reception packet TAPA 410 & paquet 42 bytes
-            #receiveControlPacket(self.buffer)
+                    # Sometimes the 42 bytes packet comes before the 115: discard it and re-read
+                    if(nbReceived == 42):
+                        print("[CONTROL] received 42 early, re-reading")
+                        nbReceived = self.receiveControlPacket(self.buffer)
+                    if (nbReceived != 155 and nbReceived != 156):
+                        raise RestartException("Expected 155 bytes, received %d" % nbReceived, 15)
+                except socket.timeout:
+                    raise RestartException("Socket timeout 3",15)
+                except KeyboardInterrupt:
+                    raise
+                self.sendControlPacket(self.MESSAGE_34)
+                self.sendControlPacket(self.MESSAGE_119)
+                try:
+                    nbReceived = self.receiveControlPacket(self.buffer)
+                    # Sometimes the 42 bytes packet comes at this point: discard it and re-read
+                    if(nbReceived == 42):
+                        print("[CONTROL] received 42 late, re-reading")
+                        nbReceived = self.receiveControlPacket(self.buffer)
+                    if (nbReceived not in self.allowedPacketLengths):
+                        raise RestartException("Expected one of %(allowedPacketLengths)s bytes, received %(receivedBytes)d" % {"allowedPacketLengths":self.allowedPacketLengths, "receivedBytes":nbReceived},15)
+                except socket.timeout:
+                    raise RestartException("Socket timeout 4",15)
+                except KeyboardInterrupt:
+                    raise
+                # reception packet TAPA 410 & paquet 42 bytes
+                #receiveControlPacket(self.buffer)
             ############################
             # BEGIN IMAGE RECEPTION LOOP
             ############################
@@ -203,6 +210,7 @@ class P2PCam():
                     socket_error = True
                     print("[DATA] self.sock.recv error")
                     continue
+
                 nbbytes = len(chunk)
                 fragments_received += 1
                 fragmentIndex += 1
@@ -210,7 +218,7 @@ class P2PCam():
                     # Filter out any potential non-image-data packets (e.g. 13 bytes statuses)
                     if nbbytes >= 17:
                         # First frame / Start of Image : get rid of the 15 bytes header
-                        if (chunk[15] == '\xff') and (chunk[16] == '\xd8'):
+                        if (chunk[15] == 255) and (chunk[16] == 216):
                             lastFragmentId = self.byteToInt(chunk[0])
                             msg+= chunk[15:]
                         # additional data fragment : just drop the 4 bytes header and concatenate to already received data
@@ -235,12 +243,12 @@ class P2PCam():
                     SOI_index = -1
                     EOI_index = -1
                     for index in range(0,len(msg)-1):
-                        if (msg[index] == '\xff'):
-                            if msg[index+1] == '\xd8':
+                        if (msg[index] == 255):
+                            if msg[index+1] == 216:
                                 SOI_index = index
                                 for index in range(index+2,len(msg)-1):
-                                    if (msg[index] == '\xff'):
-                                        if msg[index+1] == '\xd9':
+                                    if (msg[index] == 255):
+                                        if msg[index+1] == 217:
                                             EOI_index = index
                                             break
                                 break
@@ -261,7 +269,7 @@ class P2PCam():
                             pass
                         # Log a trace every 5 min or so (5*60s*3img/sec)
                         if (imageIndex % 900 == 0):
-                             print("[DATA] Still alive %s, image index %d" % (time.strftime("%Y-%m-%d @ %H:%M:%S"), imageIndex))
+                             print(("[DATA] Still alive %s, image index %d" % (time.strftime("%Y-%m-%d @ %H:%M:%S"), imageIndex)))
                         imageIndex += 1
             #        else:
             #            print("no image found in stream among %d bytes"% len(msg))
@@ -397,11 +405,10 @@ class P2PCam():
                     packet = self.MESSAGE_CONTINUE_BEGIN + tmp + self.MESSAGE_CONTINUE_END
                     self.sendContinuePacket(packet)
         except RestartException as resExc:
-            print("[ERROR] restarting global loop in %d seconds due to exception: %s" % (resExc.delay,resExc.msg))
+            print(("[ERROR] restarting global loop in %d seconds due to exception: %s" % (resExc.delay,resExc.msg)))
             # Let the camera breathe a bit before trying again
             time.sleep(resExc.delay)
             pass
         except KeyboardInterrupt:
             raise
         #end of global loop
-        print("[CONTROL] exiting surveillance")
