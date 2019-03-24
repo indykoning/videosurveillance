@@ -3,10 +3,6 @@ import sys, traceback
 import socket
 import time
 import random
-import struct
-import numpy as np
-import cv2
-
 
 class RestartException(Exception):
     def __init__(self, msg, delay=1):
@@ -85,7 +81,8 @@ class P2PCam():
         self.buffer = bytearray(1024)
         self.global_loop_iteration = 0
         self.msg = bytearray()
-        self.initialize()
+        self.timeout_iteration = 0
+        self.hasInitialised = False
 
     def byteToInt(self, byteVal):
         return byteVal
@@ -184,7 +181,10 @@ class P2PCam():
                         if (i == 9):
                             raise RestartException("Max number of status check loops reached", 15)
                 except socket.timeout:
-                    raise RestartException("Socket timeout 1", 15)
+                    if self.timeout_iteration > 3:
+                        raise Exception('Not responding')
+                    self.timeout_iteration +=1
+                    raise RestartException("Socket timeout 1", 1)
                 except KeyboardInterrupt:
                     raise
             self.sendControlPacket(self.MESSAGE_13_2)
@@ -239,6 +239,9 @@ class P2PCam():
 
 
     def retrieveImage(self):
+        if not self.hasInitialised:
+            self.initialize()
+            self.hasInitialised = True
         try:
             ############################
             # BEGIN IMAGE RECEPTION LOOP
