@@ -8,8 +8,21 @@ def saveFile(cam, jpeg):
     cv2.imwrite('stream.jpg', RGBImageNext)
 
 
-# camera = Camera.P2PCam("192.168.178.28", "192.168.178.9")
-camera = Camera.P2PCam("10.42.0.1", "10.42.0.134")
-camera.onJpegReceived = saveFile
+camera = Camera.P2PCam("192.168.178.28", "192.168.178.9")
+# camera = Camera.P2PCam("10.42.0.1", "10.42.0.134")
+# camera.onJpegReceived = saveFile
 camera.NB_FRAGMENTS_TO_ACCUMULATE = 20
-camera.start()
+# camera.SOCKET_TIMEOUT = 20
+# camera.start()
+camera.initialize()
+saveFile(camera, camera.retrieveImage())
+while camera.socket_error == True:
+    try:
+        jpeg = camera.retrieveImage()
+        saveFile(camera, jpeg)
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        print(("[ERROR] " + str(e)))
+        # Let the camera breathe a bit before trying again
+        pass
